@@ -1,0 +1,8 @@
+streamlit>=1.31
+opencv-python>=4.8
+numpy>=1.24
+pandas>=2.0
+tensorflow>=2.12,<3.0
+ 
+# To run the app after installing dependencies:
+#   streamlit run app.py
