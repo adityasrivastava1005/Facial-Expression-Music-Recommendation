@@ -3,11 +3,8 @@ import numpy as np
 import streamlit as st
 import cv2
 import pandas as pd
-import tensorflow
 from collections import Counter
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Flatten
-from tensorflow.keras.layers import Conv2D, MaxPooling2D
+import tempfile
 import base64
 import os
 
@@ -124,27 +121,58 @@ def pre(l):
             ul.append(x)
     return ul
 
-# Load model
-model = Sequential()
-model.add(Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(48,48,1)))
-model.add(Conv2D(64, kernel_size=(3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-model.add(Flatten())
-model.add(Dense(1024, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(7, activation='softmax'))
-
-try:
-    model.load_weights('model.h5')
-except Exception as e:
-    st.error("model.h5 not found or could not be loaded. Place it next to app.py.")
-    st.stop()
+# Model will be created and loaded lazily to avoid import-time TensorFlow errors
+# so the Streamlit UI can start even if TensorFlow isn't compatible with the
+# current Python interpreter. The model is built only when the user starts
+# scanning.
+model = None
 emotion_dict = {0: "Angry", 1: "Disgusted", 2: "Fearful", 3: "Happy", 4: "Neutral", 5: "Sad", 6: "Surprised"}
+
+
+def load_model():
+    """Lazily import TensorFlow, build the model architecture, and load weights.
+    Raises RuntimeError with a helpful message if TensorFlow import fails or
+    if weights can't be loaded.
+    """
+    global model
+    if model is not None:
+        return model
+
+    try:
+        import tensorflow as tf
+        from tensorflow.keras.models import Sequential
+        from tensorflow.keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D
+    except Exception as e:
+        raise RuntimeError(
+            "Failed to import TensorFlow. This often means the installed Python "
+            "version and TensorFlow wheel are incompatible, or required redistributables "
+            "are missing. See the README for recommended Python versions. Original error: " + str(e)
+        ) from e
+
+    m = Sequential()
+    m.add(Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(48,48,1)))
+    m.add(Conv2D(64, kernel_size=(3, 3), activation='relu'))
+    m.add(MaxPooling2D(pool_size=(2, 2)))
+    m.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
+    m.add(MaxPooling2D(pool_size=(2, 2)))
+    m.add(Conv2D(128, kernel_size=(3, 3), activation='relu'))
+    m.add(MaxPooling2D(pool_size=(2, 2)))
+    m.add(Dropout(0.25))
+    m.add(Flatten())
+    m.add(Dense(1024, activation='relu'))
+    m.add(Dropout(0.5))
+    m.add(Dense(7, activation='softmax'))
+
+    weights_path = 'model.h5'
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError("model.h5 not found in project root. Place it next to app.py.")
+    try:
+        m.load_weights(weights_path)
+    except Exception as e:
+        raise RuntimeError("Failed to load model weights from model.h5: " + str(e)) from e
+
+    model = m
+    return model
 
 cv2.ocl.setUseOpenCL(False)
 cap = None
@@ -181,10 +209,18 @@ with col2:
                 st.warning("Could not open webcam. Try 'Upload video' instead.")
                 cap = None
 
+        # Load model now (lazy) so the UI can show even if TF import fails earlier.
+        try:
+            model = load_model()
+        except Exception as e:
+            st.error(str(e))
+            st.stop()
+
         # If upload provided, save to temp file and open
         temp_video_path = None
         if uploaded_file is not None:
-            temp_video_path = os.path.join("/tmp", uploaded_file.name)
+            temp_dir = tempfile.gettempdir()
+            temp_video_path = os.path.join(temp_dir, uploaded_file.name)
             with open(temp_video_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             cap = cv2.VideoCapture(temp_video_path)
@@ -193,7 +229,9 @@ with col2:
             st.error("No video source available. Aborting scan.")
         else:
             frame_slot = st.image([])
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            # Prefer the local haarcascade file if present in the repo root.
+            cascade_path = "haarcascade_frontalface_default.xml" if os.path.exists("haarcascade_frontalface_default.xml") else (cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            face_cascade = cv2.CascadeClassifier(cascade_path)
             count = 0
             max_frames = 60  # process up to 60 frames or until video ends
             while count < max_frames:
