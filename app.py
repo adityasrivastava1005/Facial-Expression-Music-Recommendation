@@ -228,34 +228,10 @@ if scan:
     detected_list.clear()
     # Open source
     if source == "Webcam":
-        if "streamlit_app" in os.environ:  # Detect Streamlit Cloud
-            st.info("Using browser camera (Streamlit Cloud mode)")
-            img_file_buffer = st.camera_input("Take a picture")
-            if img_file_buffer is not None:
-                bytes_data = img_file_buffer.getvalue()
-                np_img = np.frombuffer(bytes_data, np.uint8)
-                frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-                cap = None  # No live video stream
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                face_cascade = cv2.CascadeClassifier(
-                    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                )
-                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
-                detected_list.clear()
-                for (x, y, w, h) in faces:
-                    roi_gray = gray[y:y + h, x:x + w]
-                    cropped_img = np.expand_dims(np.expand_dims(cv2.resize(roi_gray, (48, 48)), -1), 0)
-                    model = load_model()
-                    prediction = model.predict(cropped_img)
-                    max_index = int(np.argmax(prediction))
-                    detected_list.append(emotion_dict[max_index])
-                st.success(f"Detected emotion: {', '.join(detected_list) if detected_list else 'None'}")
-        else:
-            st.info("Using system webcam (local mode)")
-            cap = cv2.VideoCapture(0)
-            if not cap.isOpened():
-                st.sidebar.warning("Could not open webcam. Try 'Upload video' instead.")
-                cap = None
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            st.sidebar.warning("Could not open webcam. Try 'Upload video' instead.")
+            cap = None
 
     # Load model now (lazy) so the UI can show even if TF import fails earlier.
     try:
