@@ -178,112 +178,151 @@ cv2.ocl.setUseOpenCL(False)
 cap = None
 
 # Streamlit UI
-page_bg_img = '''
+page_bg_img = """
 <style>
 body {
-    background-image: url("https://images.unsplash.com/photo-1542281286-9e0a16bb7366");
-    background-size: cover;
+        background-color: #0f1724; /* darker, neutral background for contrast */
+}
+.card {
+    background: linear-gradient(180deg,#1f2937,#111827);
+    padding: 12px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    color: #e5e7eb;
+    margin-bottom: 12px;
+}
+.badge {
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #118217;
+    color: #f8fafc;
+    margin-right: 8px;
+    font-weight: 600;
 }
 </style>
-'''
+"""
+
 st.markdown(page_bg_img, unsafe_allow_html=True)
-st.markdown("<h2 style='text-align: center; color: white'><b>Emotion based music recommendation</b></h2>", unsafe_allow_html=True)
-st.markdown("<h5 style='text-align: center; color: grey;'><b>Click on the name of recommended song to reach website</b></h5>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: black'>Emotion-Based Music Recommendation</h1>", unsafe_allow_html=True)
+st.write('<p style="text-align: center; colour: black">Detect your facial emotion from webcam or a short video and get mood-matching song suggestions.</p>', unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns(3)
+# Sidebar controls
+st.sidebar.title("Controls")
+st.sidebar.info("Choose input source and start scanning to detect emotions")
+source = st.sidebar.radio("Input source:", options=["Webcam", "Upload video"], index=0)
+uploaded_file = None
+if source == "Upload video":
+    uploaded_file = st.sidebar.file_uploader("Upload a video file (mp4, avi)", type=["mp4", "avi", "mov"])
 
-list = []
-with col2:
-    st.info("Choose input source and then click 'SCAN EMOTION' to start detection")
-    source = st.radio("Input source:", options=["Webcam", "Upload video"], index=0)
-    uploaded_file = None
-    if source == "Upload video":
-        uploaded_file = st.file_uploader("Upload a video file (mp4, avi)", type=["mp4", "avi", "mov"])
+scan = st.sidebar.button('Scan Emotion')
 
-    if st.button('SCAN EMOTION(Click here)'):
-        list.clear()
-        # Try opening webcam if chosen
-        if source == "Webcam":
-            cap = cv2.VideoCapture(0)
-            if not cap.isOpened():
-                st.warning("Could not open webcam. Try 'Upload video' instead.")
-                cap = None
+# Area placeholders
+frame_slot = st.empty()
+progress_slot = st.sidebar.empty()
+result_slot = st.container()
 
-        # Load model now (lazy) so the UI can show even if TF import fails earlier.
-        try:
-            model = load_model()
-        except Exception as e:
-            st.error(str(e))
-            st.stop()
+detected_list = []
 
-        # If upload provided, save to temp file and open
-        temp_video_path = None
-        if uploaded_file is not None:
-            temp_dir = tempfile.gettempdir()
-            temp_video_path = os.path.join(temp_dir, uploaded_file.name)
-            with open(temp_video_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            cap = cv2.VideoCapture(temp_video_path)
+if scan:
+    detected_list.clear()
+    # Open source
+    if source == "Webcam":
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            st.sidebar.warning("Could not open webcam. Try 'Upload video' instead.")
+            cap = None
 
-        if cap is None:
-            st.error("No video source available. Aborting scan.")
-        else:
-            frame_slot = st.image([])
-            # Prefer the local haarcascade file if present in the repo root.
-            cascade_path = "haarcascade_frontalface_default.xml" if os.path.exists("haarcascade_frontalface_default.xml") else (cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-            face_cascade = cv2.CascadeClassifier(cascade_path)
-            count = 0
-            max_frames = 60  # process up to 60 frames or until video ends
-            while count < max_frames:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
-                for (x, y, w, h) in faces:
-                    cv2.rectangle(frame, (x, y - 50), (x + w, y + h + 10), (255, 0, 0), 2)
-                    roi_gray = gray[y:y + h, x:x + w]
-                    try:
-                        cropped_img = np.expand_dims(np.expand_dims(cv2.resize(roi_gray, (48, 48)), -1), 0)
-                        prediction = model.predict(cropped_img)
-                        max_index = int(np.argmax(prediction))
-                        list.append(emotion_dict[max_index])
-                        cv2.putText(frame, emotion_dict[max_index], (x + 20, y - 60),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-                    except Exception:
-                        # skip faces too small or processing errors
-                        pass
-                # Convert BGR to RGB for Streamlit
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame_slot.image(frame_rgb, channels='RGB')
-                count += 1
+    # Load model now (lazy) so the UI can show even if TF import fails earlier.
+    try:
+        model = load_model()
+    except Exception as e:
+        st.error(str(e))
+        st.stop()
 
-            cap.release()
-            # Remove temp file if used
-            if temp_video_path is not None and os.path.exists(temp_video_path):
+    # If upload provided, save to temp file and open
+    temp_video_path = None
+    if uploaded_file is not None:
+        temp_dir = tempfile.gettempdir()
+        temp_video_path = os.path.join(temp_dir, uploaded_file.name)
+        with open(temp_video_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        cap = cv2.VideoCapture(temp_video_path)
+
+    if cap is None:
+        st.error("No video source available. Aborting scan.")
+    else:
+        # Prefer the local haarcascade file if present in the repo root.
+        cascade_path = "haarcascade_frontalface_default.xml" if os.path.exists("haarcascade_frontalface_default.xml") else (cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        count = 0
+        max_frames = 60  # process up to 60 frames or until video ends
+        progress = progress_slot.progress(0)
+        while count < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y - 50), (x + w, y + h + 10), (255, 0, 0), 2)
+                roi_gray = gray[y:y + h, x:x + w]
                 try:
-                    os.remove(temp_video_path)
+                    cropped_img = np.expand_dims(np.expand_dims(cv2.resize(roi_gray, (48, 48)), -1), 0)
+                    prediction = model.predict(cropped_img)
+                    max_index = int(np.argmax(prediction))
+                    detected_list.append(emotion_dict[max_index])
+                    cv2.putText(frame, emotion_dict[max_index], (x + 20, y - 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                 except Exception:
+                    # skip faces too small or processing errors
                     pass
+            # Convert BGR to RGB for Streamlit
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_slot.image(frame_rgb, channels='RGB')
+            count += 1
+            progress.progress(int(count / max_frames * 100))
 
-            list = pre(list)
-            if len(list) == 0:
-                st.warning("No faces/emotions detected.")
-            else:
-                st.success("Emotions successfully detected!")
-                st.write("### Detected Emotion(s):")
-                st.write(", ".join(list))
+        cap.release()
+        # Remove temp file if used
+        if temp_video_path is not None and os.path.exists(temp_video_path):
+            try:
+                os.remove(temp_video_path)
+            except Exception:
+                pass
 
-new_df = fun(list)
-st.write("")
+        detected_list = pre(detected_list)
+        # with result_slot:
+        if len(detected_list) == 0:
+            st.warning("No faces/emotions detected.")
+        else:
+            st.success("Emotions successfully detected!")
+            st.write("### Detected Emotion(s):")
+            badges = "".join([f"<span class='badge'>{e}</span>" for e in detected_list])
+            st.markdown(badges, unsafe_allow_html=True)
+                # st.write(", ".join(detected_list))
+
+new_df = fun(detected_list)
 
 st.markdown("<h5 style='text-align: center; color: grey;'><b>Recommended song's with artist names</b></h5>", unsafe_allow_html=True)
+st.markdown("<h5 style='text-align: center; color: grey;'><b>Click on the name of recommended song to reach website</b></h5>", unsafe_allow_html=True)
 st.write("---------------------------------------------------------------------------------------------------------------------")
 
 try:
-    for l, a, n, i in zip(new_df["link"], new_df['artist'], new_df['name'], range(30)):
-        st.markdown(f"<h4 style='text-align: center;'><a href={l}>{i+1}. {n}</a></h4>", unsafe_allow_html=True)
-        st.markdown(f"<h5 style='text-align: center; color: grey;'><i>{a}</i></h5>", unsafe_allow_html=True)
-        st.write("---------------------------------------------------------------------------------------------------------------------")
-except:
+    for i, row in new_df.head(30).iterrows():
+        link = row.get('link', '#')
+        artist = row.get('artist', '')
+        name = row.get('name', 'Unknown')
+        card_html = f"""
+        <div class='card'>
+          <div style='display:flex; justify-content:space-between; align-items:center'>
+            <div>
+              <a href='{link}' target='_blank' style='color:#e5e7eb; text-decoration:none; font-size:18px;'>{i+1}. {name}</a>
+              <div style='color:#9ca3af; font-size:13px;'>{artist}</div>
+            </div>
+          </div>
+        </div>
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
+except Exception:
     pass
